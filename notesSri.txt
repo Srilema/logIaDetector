@@ -1,0 +1,168 @@
+import os
+import time
+import re
+import pandas as pd
+from datetime import datetime
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+# ========== CONFIG ==========
+LOG_DIR = "/logs"
+LOG_EXTENSIONS = [".log"]
+AGG_INTERVAL_SECONDS = 60  # how often to aggregate & display features
+
+# ========== PARSING FUNCTIONS ==========
+def parse_log_line(line):
+    ssh_match = re.search(
+        r'(?P<timestamp>\w{3} +\d+ \d+:\d+:\d+).*Failed password for .* from (?P<ip>\d+\.\d+\.\d+\.\d+)',
+        line
+    )
+    if ssh_match:
+        return {
+            'event': 'failed_login',
+            'ip': ssh_match.group('ip'),
+            'timestamp': parse_timestamp(ssh_match.group('timestamp'))
+        }
+
+    if 'Nmap Scripting Engine' in line:
+        snort_match = re.search(
+            r'(?P<timestamp>\w{3} +\d+ \d+:\d+:\d+).*?(\d+\.\d+\.\d+\.\d+):\d+ ->',
+            line
+        )
+        if snort_match:
+            return {
+                'event': 'nmap_scan',
+                'ip': snort_match.group(2),
+                'timestamp': parse_timestamp(snort_match.group('timestamp'))
+            }
+
+    return None
+
+def parse_timestamp(raw_ts):
+    try:
+        return datetime.strptime(f"{datetime.now().year} {raw_ts}", "%Y %b %d %H:%M:%S")
+    except ValueError:
+        return None
+
+# ========== TAIL & AGGREGATION ==========
+class LogHandler(FileSystemEventHandler):
+    def __init__(self):
+        self.file_offsets = {}
+        self.parsed_logs = []
+
+    def on_modified(self, event):
+        if not event.is_directory and any(event.src_path.endswith(ext) for ext in LOG_EXTENSIONS):
+            self.process_file(event.src_path)
+
+    def process_file(self, path):
+        offset = self.file_offsets.get(path, 0)
+        try:
+            with open(path, 'r') as f:
+                f.seek(offset)
+                for line in f:
+                    parsed = parse_log_line(line)
+                    if parsed:
+                        self.parsed_logs.append(parsed)
+                self.file_offsets[path] = f.tell()
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+
+    def extract_features(self):
+        if not self.parsed_logs:
+            return None
+        df = pd.DataFrame(self.parsed_logs)
+        df['minute'] = df['timestamp'].dt.floor('min')
+        features = df.groupby('minute').agg(
+            failed_logins=('event', lambda x: (x == 'failed_login').sum()),
+            nmap_scans=('event', lambda x: (x == 'nmap_scan').sum()),
+            unique_ips=('ip', pd.Series.nunique)
+        ).reset_index()
+        return features.tail(5)  # show last 5 windows
+
+# ========== MONITOR LOOP ==========
+def start_monitoring():
+    event_handler = LogHandler()
+    observer = Observer()
+    observer.schedule(event_handler, path=LOG_DIR, recursive=False)
+    observer.start()
+
+    print(f"Monitoring logs in {LOG_DIR}... (CTRL+C to stop)")
+    try:
+        while True:
+            time.sleep(AGG_INTERVAL_SECONDS)
+            features = event_handler.extract_features()
+            if features is not None:
+                print("\n=== Feature Snapshot ===")
+                print(features)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+# ========== MAIN ==========
+if __name__ == "__main__":
+    start_monitoring()7
+
+
+
+=========== SINGLE FILE LOG - READ WHILE LOGGING HAPPEN ===========================================
+Excellent and very practical question — yes, you can safely log with syslog to a file while your Python process reads it, without conflict, as long as you follow a few simple best practices.
+✅ Short Answer
+
+    Yes, syslog continuously appends to the same log file (e.g., /var/log/syslog, /var/log/auth.log), and
+    Yes, your Python script can read from that file in real-time using tail-like logic without causing conflicts.
+
+🔐 Why It’s Safe
+
+    Log files are opened in append mode by syslog daemons like rsyslogd or syslog-ng.
+
+    Your Python script opens the same file in read-only mode ('r'), and only reads new lines.
+
+    There’s no file locking required or used by default — modern Linux file systems handle concurrent access very well.
+
+This is exactly how tools like:
+
+    tail -F
+
+    logrotate
+
+    filebeat
+    …work.
+
+📁 How Logging Happens
+
+    syslog writes to files by appending new lines at the end.
+
+    Your script just seeks to the last known offset and reads anything new since then.
+
+    Even if the file rotates (e.g., syslog.1, syslog.2.gz), tools like watchdog or inotify (used underneath) can detect and reopen the new file if needed (with some extra logic).
+
+🔧 Pro Tips
+
+    Always open log files in 'r' mode for reading:
+
+    with open('/var/log/auth.log', 'r') as f:
+        f.seek(last_offset)
+        for line in f:
+            # Process new lines only
+
+    Use watchdog or polling to check for changes every few seconds.
+
+    Avoid write access in your monitoring script unless absolutely necessary.
+
+    If you're tailing multiple files (like in /logs/), avoid trying to read rotated .gz or .1 files unless you're handling historical data.
+
+🧪 Want Proof?
+
+Here’s a test you can run:
+
+    In terminal #1:
+
+sudo tail -F /var/log/auth.log
+
+In terminal #2, run:
+
+    sudo logger -p auth.info "Failed password for testuser from 192.168.1.50 port 4444 ssh2"
+
+You’ll see the line appear immediately, and your tailing script (or Python parser) can read it live.
+
+Would you like me to add Snort + rsyslog setup tips so all alerts go into a single log file for parsing?
