@@ -6,6 +6,7 @@ from watchdog.events import FileSystemEventHandler
 import time
 import os
 
+
 # Parse functions (same as your current code)
 def parse_log_line(line):
     ssh_match = re.search(
