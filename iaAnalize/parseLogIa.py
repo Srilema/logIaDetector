@@ -34,15 +34,16 @@ def parse_log_line(line):
 
     if 'Nmap Scripting Engine' in line:
         snort_match = re.search(
-            r'(?P<timestamp>\w{3} +\d+ \d+:\d+:\d+).*?(\d+\.\d+\.\d+\.\d+):\d+ ->',
+            r'(?P<timestamp>\w{3} +\d+ \d+:\d+:\d+).*?{TCP} (?P<ip>\d+\.\d+\.\d+\.\d+):\d+ ->',
             line
         )
         if snort_match:
             return {
                 'event': 'nmap_scan',
-                'ip': snort_match.group(2),
+                'ip': snort_match.group('ip'),
                 'timestamp': parse_timestamp(snort_match.group('timestamp'))
             }
+
 
     return None
 
@@ -129,7 +130,7 @@ class LogHandler(FileSystemEventHandler):
 
             # Filter anomalies by significance
             def is_meaningful(row):
-                return row['failed_logins'] > 5 or row['nmap_scans'] > 0 or row['unique_ips'] > 3
+                return row['failed_logins'] > 5 or row['nmap_scans'] > 2 or row['unique_ips'] > 3
 
             significant = anomalies[anomalies.apply(is_meaningful, axis=1)]
 
