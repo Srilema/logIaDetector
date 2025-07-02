@@ -28,11 +28,16 @@ def gen_alert(event_type=None, src_ip=None, timestamp=None):
         return f"{ts} {hostname} sshd[{pid}]: Failed password for {user} from {src_ip} port {port} ssh2"
     elif event_type == "successful_login":
         return f"{ts} {hostname} sshd[{pid}]: Accepted password for {user} from {src_ip} port {port} ssh2"
+    elif event_type == "nmap_scan":
+        msg = "Nmap Scripting Engine"
+        proto = "{TCP}"
+        dst_port = random.randint(1, 1024)
+        return f"{ts} [**] [1:1000000:1] {msg} [**] [Priority: {random.randint(1,3)}] {proto} {src_ip}:{port} -> {dst}:{dst_port}"
     else:
         msg, proto = types[event_type]
         return f"{ts} [**] [1:1000000:1] {msg} [**] [Priority: {random.randint(1,3)}] {proto} {src_ip} -> {dst}"
 
-def append_logs_forever(filename, bruteforce_chance=0.02, burst_size=25, interval_seconds=1):
+def append_logs_forever(filename, bruteforce_chance=0.02, burst_size=25, nmap_chance=0.01, nmap_burst_size=10,  interval_seconds=1):
     """
     Continuously append new log entries every 'interval_seconds' seconds to simulate a live log.
     Includes brute force bursts, failed and successful login attempts, and other events.
@@ -52,6 +57,13 @@ def append_logs_forever(filename, bruteforce_chance=0.02, burst_size=25, interva
                     f.write(alert_line + "\n")
                     print(f"Appended log: {alert_line}")
                     current_time += timedelta(seconds=1)
+            elif random.random() < nmap_chance:
+                scanner_ip = f"192.168.1.{random.randint(1,254)}"
+                for _ in range(nmap_burst_size):
+                    alert_line = gen_alert(event_type="nmap_scan", src_ip=scanner_ip, timestamp=ts_str)
+                    f.write(alert_line + "\n")
+                    print(f"Appended log: {alert_line}")
+                    current_time += timedelta(seconds=1)
             else:
                 r = random.random()
                 if r < 0.05:
@@ -68,4 +80,4 @@ def append_logs_forever(filename, bruteforce_chance=0.02, burst_size=25, interva
         time.sleep(interval_seconds)
 
 if __name__ == "__main__":
-    append_logs_forever('synthetic_snort_dynamic.log', bruteforce_chance=0.1, burst_size=15, interval_seconds=2)
+    append_logs_forever('synthetic_snort_dynamic.log', bruteforce_chance=0.1, burst_size=15, nmap_chance=0.01, nmap_burst_size=10, interval_seconds=2)
